@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#111418">
+<title>玄関ロック</title>
+<style>
+  :root {
+    --bg: #111418; --panel: #1b2027; --line: #2a313b; --text: #eef1f4; --muted: #8b95a3;
+    --lock: #3d7dd8; --unlock: #d9822b; --ok: #3fae6a; --err: #e0524c;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding: max(20px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+  .pill {
+    font-size: 13px; padding: 6px 12px; border-radius: 999px; background: var(--panel);
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .pill.locked { color: #9cc3ff; border-color: #2f5590; }
+  .pill.unlocked { color: #ffc58a; border-color: #8a5420; }
+  .buttons { display: grid; gap: 14px; flex: 1; grid-template-rows: 1fr 1fr; min-height: 340px; }
+  button.big {
+    border: 0; border-radius: 22px; color: #fff; font-size: 30px; font-weight: 700;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    transition: transform .08s ease, opacity .2s; font-family: inherit;
+  }
+  button.big:active { transform: scale(.98); }
+  button.big:disabled { opacity: .45; }
+  button.big svg { width: 54px; height: 54px; }
+  #btnLock { background: var(--lock); }
+  #btnUnlock { background: var(--unlock); }
+  #msg { min-height: 1.5em; font-size: 15px; text-align: center; color: var(--muted); }
+  #msg.ok { color: var(--ok); } #msg.err { color: var(--err); }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 14px; }
+  summary { padding: 10px 0; color: var(--muted); font-size: 14px; cursor: pointer; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text] {
+    width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 16px; font-family: ui-monospace, Menlo, monospace;
+  }
+  .row { display: flex; gap: 10px; margin: 14px 0 12px; flex-wrap: wrap; }
+  .row button {
+    flex: 1; padding: 11px; border-radius: 10px; border: 1px solid var(--line);
+    background: #232a33; color: var(--text); font-size: 15px; font-family: inherit;
+  }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); margin-top: 12px; }
+  .note { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 6px 0 12px; }
+  #unsupported { display: none; background: #3a1f1f; border: 1px solid #6b2e2e; border-radius: 14px; padding: 14px; font-size: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>玄関ロック</h1>
+  <span id="state" class="pill">未接続</span>
+</header>
+
+<div id="unsupported">
+  このブラウザはWeb Bluetoothに対応していません。iPhoneでは App Store の無料ブラウザ「<b>Bluefy</b>」でこのページを開いてください（Safariでは動きません）。
+</div>
+
+<div class="buttons">
+  <button class="big" id="btnUnlock" aria-label="解錠">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>
+    解錠
+  </button>
+  <button class="big" id="btnLock" aria-label="施錠">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+    施錠
+  </button>
+</div>
+<div id="msg"></div>
+
+<details id="settings">
+  <summary>設定</summary>
+  <label for="keyId">Key ID（16進2文字）</label>
+  <input type="text" id="keyId" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2" placeholder="例: 0a">
+  <label for="encKey">暗号鍵（16進32文字）</label>
+  <input type="text" id="encKey" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="例: 0123456789abcdef0123456789abcdef">
+  <label class="check"><input type="checkbox" id="confirmUnlock"> 解錠の前に確認する</label>
+  <label class="check"><input type="checkbox" id="showAll"> ロックが一覧に出ないとき：すべてのBluetooth機器を表示</label>
+  <div class="row">
+    <button id="btnSave">保存</button>
+    <button id="btnStatus">状態を確認</button>
+    <button id="btnForget">ロックを選び直す</button>
+  </div>
+  <p class="note">鍵はこのブラウザの中（この端末）だけに保存され、どこにも送信されません。ページのURLに <code>?do=unlock</code> または <code>?do=lock</code> を付けて開くと、可能な環境では開いた瞬間に実行します。</p>
+</details>
+
+<script>
+// SwitchBot Lock Pro BLE protocol core (no DOM). Ported from pySwitchbot.
+const SB = (() => {
+  const SERVICE = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
+  const TX_CHAR = "cba20002-224d-11e6-9fb8-0002a5d5c51b"; // write
+  const RX_CHAR = "cba20003-224d-11e6-9fb8-0002a5d5c51b"; // notify
+
+  // Lock Pro commands (full hex incl. "57" header)
+  const CMD = {
+    lock: "570f4e0101000000",
+    unlock: "570f4e0101000080",
+    info: "570f4f8104",
+  };
+  const OK_CODES = new Set([1, 6]); // 6 = success, low battery
+  const STATUS = ["施錠中", "解錠中", "施錠動作中", "解錠動作中", "施錠が止まりました", "解錠が止まりました", "半施錠", "半施錠"];
+  const STATUS_KEY = ["locked", "unlocked", "locking", "unlocking", "lock_jammed", "unlock_jammed", "partial", "partial"];
+
+  const hexToBytes = (h) => {
+    h = h.replace(/[^0-9a-fA-F]/g, "");
+    if (h.length % 2) throw new Error("hex length");
+    const out = new Uint8Array(h.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+    return out;
+  };
+  const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  const concat = (...arrs) => {
+    const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0));
+    let o = 0;
+    for (const a of arrs) { out.set(a, o); o += a.length; }
+    return out;
+  };
+
+  class Session {
+    constructor(keyIdHex, encKeyHex, subtle) {
+      if (!/^[0-9a-fA-F]{2}$/.test(keyIdHex)) throw new Error("Key ID は16進2文字です");
+      if (!/^[0-9a-fA-F]{32}$/.test(encKeyHex)) throw new Error("暗号鍵は16進32文字です");
+      this.keyId = keyIdHex.toLowerCase();
+      this.rawKey = hexToBytes(encKeyHex);
+      this.subtle = subtle;
+      this.mode = null; // 0 = CTR, 1 = GCM
+      this.iv = null;
+    }
+
+    reset() { this.mode = null; this.iv = null; }
+
+    // Plain (unencrypted) IV request: "57" + "000000" + "0f2103" + keyId
+    initPacket() { return hexToBytes("57000000" + "0f2103" + this.keyId); }
+
+    applyInitResponse(resp) {
+      if (resp[0] !== 1) throw new Error("暗号化の初期化に失敗しました (code " + resp[0] + ")。Key ID を確認してください");
+      const mode = resp[2];
+      if (mode !== 0 && mode !== 1) throw new Error("未対応の暗号モード: " + mode);
+      const iv = mode === 1 ? resp.slice(4, resp.length - 4) : resp.slice(4);
+      if (iv.length !== (mode === 1 ? 12 : 16)) throw new Error("IVの長さが不正です");
+      this.mode = mode;
+      this.iv = iv;
+    }
+
+    async _key(usage) {
+      const alg = this.mode === 1 && usage === "gcm" ? "AES-GCM" : "AES-CTR";
+      return this.subtle.importKey("raw", this.rawKey, { name: alg }, false, ["encrypt", "decrypt"]);
+    }
+
+    _ctrCounterForDecrypt() {
+      // GCM keystream for data starts at counter block IV || 00000002
+      if (this.mode === 1) return { counter: concat(this.iv, new Uint8Array([0, 0, 0, 2])), length: 32 };
+      return { counter: this.iv, length: 128 };
+    }
+
+    // Returns the full packet to write for a command like "570f4e0101000000"
+    async commandPacket(cmdHex) {
+      const payload = hexToBytes(cmdHex.slice(2));
+      let ct, header;
+      if (this.mode === 1) {
+        const k = await this._key("gcm");
+        const out = new Uint8Array(await this.subtle.encrypt({ name: "AES-GCM", iv: this.iv, tagLength: 128 }, k, payload));
+        ct = out.slice(0, out.length - 16);
+        header = out.slice(out.length - 16, out.length - 14);
+      } else {
+        const k = await this._key("ctr");
+        ct = new Uint8Array(await this.subtle.encrypt({ name: "AES-CTR", ...this._ctrCounterForDecrypt() }, k, payload));
+        header = this.iv.slice(0, 2);
+      }
+      return concat(hexToBytes(cmdHex.slice(0, 2)), hexToBytes(this.keyId), header, ct);
+    }
+
+    // resp: raw notification bytes. Returns [status, ...decrypted]
+    async decodeResponse(resp) {
+      const body = resp.slice(4);
+      let dec = new Uint8Array(0);
+      if (body.length) {
+        const k = await this._key("ctr");
+        dec = new Uint8Array(await this.subtle.decrypt({ name: "AES-CTR", ...this._ctrCounterForDecrypt() }, k, body));
+      }
+      if (this.mode === 1) this._incIv();
+      return concat(resp.slice(0, 1), dec);
+    }
+
+    _incIv() {
+      for (let i = this.iv.length - 1; i >= 0; i--) {
+        this.iv[i] = (this.iv[i] + 1) & 0xff;
+        if (this.iv[i] !== 0) break;
+      }
+    }
+  }
+
+  function parseLockInfo(decoded) {
+    if (!OK_CODES.has(decoded[0]) || decoded.length < 2) return null;
+    const d = decoded.slice(1);
+    const s = (d[0] & 0b01111000) >> 3;
+    return {
+      status: STATUS_KEY[s] || "unknown",
+      label: STATUS[s] || "不明",
+      calibrated: !!(d[0] & 0x80),
+      doorOpen: d.length > 1 ? !!(d[1] & 0b00010000) : null,
+    };
+  }
+
+  return { SERVICE, TX_CHAR, RX_CHAR, CMD, OK_CODES, Session, parseLockInfo, hexToBytes, bytesToHex };
+})();
+if (typeof module !== "undefined") module.exports = SB;
+
+</script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  const ui = {
+    msg(text, kind = "") { $("msg").textContent = text; $("msg").className = kind; },
+    state(info) {
+      const el = $("state");
+      el.className = "pill " + (info?.status === "locked" ? "locked" : info?.status === "unlocked" ? "unlocked" : "");
+      el.textContent = info ? info.label + (info.doorOpen ? "・ドア開" : "") : "未接続";
+    },
+    busy(b) { $("btnLock").disabled = b; $("btnUnlock").disabled = b; },
+  };
+
+  // ---------- settings ----------
+  $("keyId").value = store.get("sb.keyId") || "";
+  $("encKey").value = store.get("sb.encKey") || "";
+  $("confirmUnlock").checked = store.get("sb.confirm") === "1";
+  $("showAll").checked = store.get("sb.showAll") === "1";
+  if (!store.get("sb.keyId")) $("settings").open = true;
+
+  $("btnSave").onclick = () => {
+    const k = $("keyId").value.trim(), e = $("encKey").value.trim().replace(/\s/g, "");
+    try { new SB.Session(k, e, crypto.subtle); } catch (err) { return ui.msg(err.message, "err"); }
+    store.set("sb.keyId", k); store.set("sb.encKey", e);
+    store.set("sb.confirm", $("confirmUnlock").checked ? "1" : "0");
+    store.set("sb.showAll", $("showAll").checked ? "1" : "0");
+    session = null;
+    ui.msg("保存しました", "ok");
+  };
+  $("btnForget").onclick = async () => {
+    store.del("sb.deviceId");
+    await disconnect();
+    device = null;
+    ui.msg("次の操作でロックを選び直します");
+  };
+  $("btnStatus").onclick = () => run("info");
+
+  // ---------- BLE ----------
+  const bt = navigator.bluetooth;
+  if (!bt || !window.crypto?.subtle) { $("unsupported").style.display = "block"; ui.busy(true); return; }
+
+  let device = null, tx = null, rx = null, session = null, waiter = null, idleTimer = null;
+
+  function getSession() {
+    if (session) return session;
+    const k = store.get("sb.keyId"), e = store.get("sb.encKey");
+    if (!k || !e) throw new Error("先に「設定」で Key ID と暗号鍵を保存してください");
+    return (session = new SB.Session(k, e, crypto.subtle));
+  }
+
+  async function pickDevice() {
+    // 1) previously permitted device (no picker, no tap needed where supported)
+    const savedId = store.get("sb.deviceId");
+    if (savedId && bt.getDevices) {
+      try {
+        const list = await bt.getDevices();
+        const d = list.find((x) => x.id === savedId);
+        if (d) return d;
+      } catch {}
+    }
+    // 2) picker
+    const optionalServices = [SB.SERVICE];
+    const showAll = store.get("sb.showAll") === "1";
+    let d;
+    if (showAll) {
+      d = await bt.requestDevice({ acceptAllDevices: true, optionalServices });
+    } else {
+      try {
+        d = await bt.requestDevice({
+          filters: [{ manufacturerData: [{ companyIdentifier: 0x0969 }] }, { services: [0xfd3d] }, { services: [SB.SERVICE] }],
+          optionalServices,
+        });
+      } catch (err) {
+        if (err.name !== "TypeError") throw err;
+        d = await bt.requestDevice({ acceptAllDevices: true, optionalServices });
+      }
+    }
+    store.set("sb.deviceId", d.id);
+    return d;
+  }
+
+  function onNotify(ev) {
+    const v = new Uint8Array(ev.target.value.buffer.slice(ev.target.value.byteOffset, ev.target.value.byteOffset + ev.target.value.byteLength));
+    if (v[0] === 0x0f) return; // unsolicited lock status push
+    if (waiter) { const w = waiter; waiter = null; w.resolve(v); }
+  }
+
+  async function connect() {
+    if (device?.gatt?.connected && tx && rx) return;
+    if (!device) {
+      device = await pickDevice();
+      device.addEventListener("gattserverdisconnected", () => { tx = rx = null; session?.reset(); ui.state(null); });
+    }
+    ui.msg("接続中…");
+    let server;
+    for (let i = 0; i < 3; i++) {
+      try { server = await device.gatt.connect(); break; }
+      catch (err) { if (i === 2) throw err; await new Promise((r) => setTimeout(r, 400)); }
+    }
+    const svc = await server.getPrimaryService(SB.SERVICE);
+    tx = await svc.getCharacteristic(SB.TX_CHAR);
+    rx = await svc.getCharacteristic(SB.RX_CHAR);
+    rx.addEventListener("characteristicvaluechanged", onNotify);
+    await rx.startNotifications();
+    session?.reset();
+  }
+
+  async function disconnect() {
+    clearTimeout(idleTimer);
+    try { if (device?.gatt?.connected) device.gatt.disconnect(); } catch {}
+    tx = rx = null; session?.reset();
+  }
+
+  async function send(bytes) {
+    const p = new Promise((resolve, reject) => {
+      waiter = { resolve };
+      setTimeout(() => { if (waiter) { waiter = null; reject(new Error("ロックから応答がありません")); } }, 5000);
+    });
+    if (tx.properties?.writeWithoutResponse && tx.writeValueWithoutResponse) await tx.writeValueWithoutResponse(bytes);
+    else if (tx.writeValueWithResponse) await tx.writeValueWithResponse(bytes);
+    else await tx.writeValue(bytes);
+    return p;
+  }
+
+  async function sendEncrypted(cmdHex) {
+    const s = getSession();
+    if (!s.iv) s.applyInitResponse(await send(s.initPacket()));
+    const resp = await send(await s.commandPacket(cmdHex));
+    return s.decodeResponse(resp);
+  }
+
+  async function readInfo() {
+    try { const info = SB.parseLockInfo(await sendEncrypted(SB.CMD.info)); ui.state(info); return info; }
+    catch { return null; }
+  }
+
+  let running = false;
+  async function run(action) {
+    if (running) return;
+    if (action === "unlock" && store.get("sb.confirm") === "1" && !confirm("解錠しますか？")) return;
+    running = true; ui.busy(true);
+    try {
+      getSession();
+      await connect();
+      if (action === "info") {
+        const info = await readInfo();
+        ui.msg(info ? "状態を取得しました" : "状態を取得できませんでした", info ? "ok" : "err");
+      } else {
+        ui.msg(action === "lock" ? "施錠しています…" : "解錠しています…");
+        const r = await sendEncrypted(action === "lock" ? SB.CMD.lock : SB.CMD.unlock);
+        if (!SB.OK_CODES.has(r[0])) throw new Error("ロックがコマンドを受け付けませんでした (code " + r[0] + ")。暗号鍵を確認してください");
+        ui.msg((action === "lock" ? "施錠しました" : "解錠しました") + (r[0] === 6 ? "（電池残量わずか）" : ""), "ok");
+        if (navigator.vibrate) navigator.vibrate(60);
+        setTimeout(readInfo, 1800);
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(disconnect, 15000);
+    } catch (err) {
+      const m = err.name === "NotFoundError" ? "ロックが選択されませんでした"
+        : err.name === "SecurityError" ? "ボタンをタップして操作してください"
+        : err.message || String(err);
+      ui.msg(m, "err");
+      await disconnect();
+    } finally {
+      running = false; ui.busy(false);
+    }
+  }
+
+  $("btnLock").onclick = () => run("lock");
+  $("btnUnlock").onclick = () => run("unlock");
+
+  // ?do=lock / ?do=unlock — only runs automatically if the browser remembers the lock (getDevices)
+  const auto = new URLSearchParams(location.search).get("do");
+  if ((auto === "lock" || auto === "unlock") && bt.getDevices && store.get("sb.deviceId")) {
+    run(auto);
+  } else if (auto === "lock" || auto === "unlock") {
+    ui.msg(`「${auto === "lock" ? "施錠" : "解錠"}」をタップしてください`);
+  }
+})();
+</script>
+</body>
+</html>
