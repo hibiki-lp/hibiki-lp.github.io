@@ -85,6 +85,8 @@
   <label for="encKey">暗号鍵（16進32文字）</label>
   <input type="text" id="encKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例: 0123456789abcdef0123456789abcdef">
   <div class="note" id="keyCount"></div>
+  <label for="mac">ロックのMACアドレス（一覧をロックだけに絞り込みます）</label>
+  <input type="text" id="mac" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例: AA:BB:CC:DD:EE:FF">
   <label class="check"><input type="checkbox" id="confirmUnlock"> 解錠の前に確認する</label>
   <label class="check"><input type="checkbox" id="showAll"> ロックが一覧に出ないとき：すべてのBluetooth機器を表示</label>
   <div class="row">
@@ -240,6 +242,7 @@ if (typeof module !== "undefined") module.exports = SB;
   // ---------- settings ----------
   $("keyId").value = store.get("sb.keyId") || "";
   $("encKey").value = store.get("sb.encKey") || "";
+  $("mac").value = store.get("sb.mac") || "";
   $("confirmUnlock").checked = store.get("sb.confirm") === "1";
   $("showAll").checked = store.get("sb.showAll") === "1";
   if (!store.get("sb.keyId")) $("settings").open = true;
@@ -257,6 +260,11 @@ if (typeof module !== "undefined") module.exports = SB;
     const k = cleanHex($("keyId").value), e = cleanHex($("encKey").value);
     $("keyId").value = k; $("encKey").value = e; updateCount();
     try { new SB.Session(k, e, crypto.subtle); } catch (err) { return ui.msg(err.message, "err"); }
+    const mac = cleanHex($("mac").value);
+    if (mac && mac.length !== 12) return ui.msg("MACアドレスは12桁（AA:BB:CC:DD:EE:FF の形）です", "err");
+    $("mac").value = mac ? mac.toUpperCase().match(/../g).join(":") : "";
+    if (mac !== (store.get("sb.mac") || "")) { store.del("sb.deviceId"); device = null; }
+    store.set("sb.mac", mac);
     store.set("sb.keyId", k); store.set("sb.encKey", e);
     store.set("sb.confirm", $("confirmUnlock").checked ? "1" : "0");
     store.set("sb.showAll", $("showAll").checked ? "1" : "0");
@@ -275,7 +283,7 @@ if (typeof module !== "undefined") module.exports = SB;
   const bt = navigator.bluetooth;
   if (!bt || !window.crypto?.subtle) { $("unsupported").style.display = "block"; ui.busy(true); return; }
 
-  let device = null, tx = null, rx = null, session = null, waiter = null, idleTimer = null;
+  var device = null; let tx = null, rx = null, session = null, waiter = null, idleTimer = null;
 
   function getSession() {
     if (session) return session;
@@ -298,7 +306,20 @@ if (typeof module !== "undefined") module.exports = SB;
     const optionalServices = [SB.SERVICE];
     const showAll = store.get("sb.showAll") === "1";
     let d;
-    if (showAll) {
+    const mac = store.get("sb.mac");
+    if (mac && !showAll) {
+      try {
+        d = await bt.requestDevice({
+          filters: [{ manufacturerData: [{ companyIdentifier: 0x0969, dataPrefix: SB.hexToBytes(mac) }] }],
+          optionalServices,
+        });
+      } catch (err) {
+        if (err.name !== "TypeError") throw err;
+      }
+    }
+    if (d) {
+      // picked via MAC filter
+    } else if (showAll) {
       d = await bt.requestDevice({ acceptAllDevices: true, optionalServices });
     } else {
       try {
@@ -333,12 +354,19 @@ if (typeof module !== "undefined") module.exports = SB;
       try { server = await device.gatt.connect(); break; }
       catch (err) { if (i === 2) throw err; await new Promise((r) => setTimeout(r, 400)); }
     }
-    const svc = await server.getPrimaryService(SB.SERVICE);
+    let svc;
+    try { svc = await server.getPrimaryService(SB.SERVICE); }
+    catch (err) { forgetDevice(); throw new Error("選んだ機器はSwitchBotではありませんでした。もう一度タップして別の機器を選んでください"); }
     tx = await svc.getCharacteristic(SB.TX_CHAR);
     rx = await svc.getCharacteristic(SB.RX_CHAR);
     rx.addEventListener("characteristicvaluechanged", onNotify);
     await rx.startNotifications();
     session?.reset();
+  }
+
+  function forgetDevice() {
+    try { if (device?.gatt?.connected) device.gatt.disconnect(); } catch {}
+    store.del("sb.deviceId"); device = null; tx = rx = null; session?.reset();
   }
 
   async function disconnect() {
@@ -360,7 +388,11 @@ if (typeof module !== "undefined") module.exports = SB;
 
   async function sendEncrypted(cmdHex) {
     const s = getSession();
-    if (!s.iv) s.applyInitResponse(await send(s.initPacket()));
+    if (!s.iv) {
+      const r = await send(s.initPacket());
+      if (r[0] !== 1) { forgetDevice(); throw new Error("この機器はロックではないか、Key IDが違います。もう一度タップして別の機器を選んでください"); }
+      s.applyInitResponse(r);
+    }
     const resp = await send(await s.commandPacket(cmdHex));
     return s.decodeResponse(resp);
   }
