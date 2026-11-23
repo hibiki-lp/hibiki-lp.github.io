@@ -81,9 +81,10 @@
 <details id="settings">
   <summary>設定</summary>
   <label for="keyId">Key ID（16進2文字）</label>
-  <input type="text" id="keyId" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2" placeholder="例: 0a">
+  <input type="text" id="keyId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例: 0a">
   <label for="encKey">暗号鍵（16進32文字）</label>
-  <input type="text" id="encKey" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="例: 0123456789abcdef0123456789abcdef">
+  <input type="text" id="encKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例: 0123456789abcdef0123456789abcdef">
+  <div class="note" id="keyCount"></div>
   <label class="check"><input type="checkbox" id="confirmUnlock"> 解錠の前に確認する</label>
   <label class="check"><input type="checkbox" id="showAll"> ロックが一覧に出ないとき：すべてのBluetooth機器を表示</label>
   <div class="row">
@@ -243,8 +244,18 @@ if (typeof module !== "undefined") module.exports = SB;
   $("showAll").checked = store.get("sb.showAll") === "1";
   if (!store.get("sb.keyId")) $("settings").open = true;
 
+  // keep only hex characters (pasted text may include spaces or labels like "暗号鍵 :")
+  const cleanHex = (v) => v.replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+  const updateCount = () => {
+    const n = cleanHex($("encKey").value).length;
+    $("keyCount").textContent = n ? `暗号鍵：${n}/32文字` + (n === 32 ? " ✓" : n < 32 ? `（あと${32 - n}文字足りません）` : `（${n - 32}文字多すぎます）`) : "";
+  };
+  $("encKey").addEventListener("input", updateCount);
+  updateCount();
+
   $("btnSave").onclick = () => {
-    const k = $("keyId").value.trim(), e = $("encKey").value.trim().replace(/\s/g, "");
+    const k = cleanHex($("keyId").value), e = cleanHex($("encKey").value);
+    $("keyId").value = k; $("encKey").value = e; updateCount();
     try { new SB.Session(k, e, crypto.subtle); } catch (err) { return ui.msg(err.message, "err"); }
     store.set("sb.keyId", k); store.set("sb.encKey", e);
     store.set("sb.confirm", $("confirmUnlock").checked ? "1" : "0");
